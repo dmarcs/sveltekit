@@ -1,0 +1,75 @@
+name: Deploy to AWS ECS
+
+on:
+  push:
+    branches:
+      - master
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: us-east-1
+
+jobs:
+  deploy:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Get Project Name
+        run: echo "PROJECT_NAME=$(node -e "console.log(require('./package.json').name)")" >> $GITHUB_ENV
+
+      - name: Get Package Version
+        run: echo "IMAGE_TAG=$(node -e "console.log(require('./package.json').version)")" >> $GITHUB_ENV
+
+      - name: Configure AWS credentials
+        run: aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID && aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY && aws configure set default.region $AWS_DEFAULT_REGION
+
+      - name: Create AWS S3 Bucket to Save Terraform State
+        run: |
+          aws s3api create-bucket --bucket terraform-$PROJECT_NAME --region $AWS_DEFAULT_REGION --acl private &&
+          aws s3api put-public-access-block --bucket terraform-$PROJECT_NAME --public-access-block-configuration "BlockPublicAcls=true,BlockPublicPolicy=true,IgnorePublicAcls=true,RestrictPublicBuckets=true"
+
+      - uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Format
+        run: terraform fmt
+
+      - name: Terraform Plan to Create ECR Repo
+        run: terraform plan -target=aws_ecr_repository.sveltekit -input=false
+
+      - name: Terraform Apply to Create ECR Repo
+        run: terraform apply -target=aws_ecr_repository.sveltekit -auto-approve -input=false
+
+      - name: Get ECR Repo URL
+        run: echo "AWS_ECR_URI=$(terraform output -raw ecr_repository_url)" >> $GITHUB_ENV
+
+      - name: Docker login
+        run: aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ECR_URI
+
+      - name: Build Docker image
+        run: docker build -t $PROJECT_NAME:$IMAGE_TAG .
+
+      - name: Tag Docker image
+        run: docker tag $PROJECT_NAME:$IMAGE_TAG $AWS_ECR_URI:$IMAGE_TAG
+
+      - name: Push Docker image
+        run: docker push $AWS_ECR_URI:$IMAGE_TAG
+
+      - name: Terraform Format
+        run: terraform fmt -check
+
+      - name: Terraform Plan
+        run: terraform plan -input=false
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -input=false
+
+          
