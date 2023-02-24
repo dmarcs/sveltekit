@@ -72,4 +72,7 @@ jobs:
       - name: Terraform Apply
         run: terraform apply -auto-approve -input=false
 
+      - name: Update ECS
+        run: aws ecs update-service --cluster $PROJECT_NAME --service $PROJECT_NAME --force-new-deployment
+
           
