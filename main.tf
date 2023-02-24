@@ -162,10 +162,6 @@ resource "aws_ecs_service" "sveltekit" {
   enable_ecs_managed_tags = true
   force_new_deployment    = true
 
-  triggers = {
-    redeployment = timestamp()
-  }
-
   network_configuration {
     assign_public_ip = true
     security_groups  = [aws_security_group.sveltekit.id]
